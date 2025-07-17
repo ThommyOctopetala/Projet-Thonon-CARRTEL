@@ -1,4 +1,3 @@
-
 # 🌍 Étude du réchauffement thermique des lacs – Mini-projet ECOMONT 2024
 
 Ce dépôt contient les données, scripts et figures associés à un mini-stage réalisé dans le cadre du master **ECOMONT** (USMB) au **CARRTEL** (INRAE, Thonon-les-Bains), durant une semaine en mars 2024.
@@ -34,6 +33,32 @@ Les lacs, en tant que sentinelles du climat, permettent d’observer finement le
 - 🔥 L’épilimnion se réchauffe **1.5 à 2× plus vite** que l’hypolimnion,
 - 🧊 À l’échelle mondiale, des lacs présentent un **refroidissement de l’hypolimnion**,
 - 🌱 Une augmentation des **flux de carbone minéralisé** est projetée jusqu’en 2100, particulièrement dans les couches superficielles.
+
+## 📊 Visualisations
+
+### 🔹 Boxplot de l'augmentation thermique
+
+![Boxplot augmentation](figures/boxplot_augmentation.jpeg)
+
+---
+
+### 🔹 Comparaison des strates par boxplot
+
+![Boxplot 2](figures/BOXPLOT2.jpeg)
+
+---
+
+### 🔹 Densité des variations de température
+
+![Distribution kernel](figures/KERNEL2.jpeg)
+
+---
+
+### 🔹 Minéralisation du carbone (projection jusqu'en 2100)
+
+![Minéralisation du carbone](figures/carbon.jpeg)
+
+---
 
 ## 📁 Contenu du dépôt
 
