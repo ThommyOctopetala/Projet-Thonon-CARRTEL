@@ -1,0 +1,2058 @@
+# =====================================================
+# Analyse thermique des lacs - Mini-stage ECOMONT 2024
+# Auteur : Thomas Souyris
+# Date : Décembre 2024
+# Objectif : analyser le découplage thermique épilimnion / hypolimnion
+# Données : jeux nationaux (LakeTSim) et globaux (EDI)
+# =====================================================
+#LIBRARY####
+library(dplyr)
+library(ggplot2)
+library(kableExtra)
+library(readr)
+library(broom)
+library(tidyr)
+library(purrr)
+library(stringr)
+library(lubridate)
+library(trend)
+library(maps)
+library(cowplot)
+library(patchwork)
+library(ggthemes)
+library(emmeans)
+library(gridExtra)
+library(maps)
+#citation("trend")
+#citation("emmeans")
+#citation("stats")
+#citations("MuMIn")
+#GLOBAL ####
+temp <- read_csv("~/Desktop/M2/miniprojetthonons/edi.1530.1/temp_do_EDI.csv")
+length(temp)
+temp <- temp[, !colnames(temp) %in% c("DO_mgL", "DO_sat","Flag_Temp_C","Flag_DO_mgL","Flag_DO_sat")] # Supprimer les colonnes
+temp <- na.omit(temp) 
+temp <- temp %>%
+  mutate(
+    Date = as.Date(Date),  # Conversion des dates
+    Year = as.numeric(format(Date, "%Y")),
+    Month = as.numeric(format(Date, "%m")),
+    season = case_when(
+      Month %in% c(12, 1, 2) ~ "Hiver",
+      Month %in% c(3, 4, 5) ~ "Printemps",
+      Month %in% c(6, 7, 8) ~ "Eté",
+      Month %in% c(9, 10, 11) ~ "Automne"
+    )
+  )
+
+metadata <- read.csv("~/Desktop/M2/miniprojetthonons/edi.1530.1/lake_metadata_EDI.csv", stringsAsFactors = FALSE)
+temp <- temp %>%
+  left_join(metadata, by = "LakeID")
+
+temp <- temp %>%
+  group_by(LakeID, Date) %>%
+  filter(
+    any(Depth_m > 1 & Depth_m <= 0.15 * MaximumDepth_m) &  # Vérifie qu'il y a une couche épilimnion (exclut 0 m)
+      any(Depth_m >= 0.90 * MaximumDepth_m) &              # Vérifie qu'il y a une couche hypolimnion (>= 90% profondeur max)
+      (Depth_m > 1 & Depth_m <= 0.15 * MaximumDepth_m |    # Conserve les couches épilimnion (> 0 m)
+         Depth_m >= 0.90 * MaximumDepth_m)                   # Conserve les couches hypolimnion
+  ) %>%
+  mutate(
+    strate = case_when(
+      Depth_m > 1 & Depth_m <= 0.15 * MaximumDepth_m ~ "epi",  # Épilimnion si profondeur > 0 m et <= 25% profondeur max
+      Depth_m >= 0.90 * MaximumDepth_m ~ "hypo",               # Hypolimnion si profondeur >= 90% profondeur max
+      TRUE ~ NA_character_                                     # Autres cas mis à NA
+    )
+  ) %>%
+  ungroup()
+
+obs <- temp %>%
+  group_by(Year, as.character(Month), strate) %>% # Remplacez stratetemp par la colonne correspondante
+  summarise(Observations = n(), .groups = "drop")
+ggplot(temp) +
+  aes(x = Year, fill = strate) +
+  geom_histogram(bins = 30L) +
+  scale_fill_hue(direction = 1) +
+  theme_minimal() +
+  facet_wrap(vars(Month))
+
+temp_filtered <- temp %>%
+  filter(Year >= 1960 & Year <= 2020)
+
+
+ggplot(temp_filtered) +
+  aes(x = Year, y = Temp_C, colour = strate) +
+  geom_smooth(method = "lm", se = TRUE) +
+  scale_color_hue(direction = 1) +
+  theme_minimal()+facet_wrap(~Month)
+
+mondial_filter <- temp_filtered %>%
+  group_by(LakeID, Date) %>%
+  filter(
+    any(Depth_m > 1 & Depth_m <= 0.15 * MaximumDepth_m) &  # Vérifie qu'il y a une couche épilimnion (exclut 0 m)
+      any(Depth_m >= 0.90 * MaximumDepth_m) &              # Vérifie qu'il y a une couche hypolimnion (>= 90% profondeur max)
+      (Depth_m > 1 & Depth_m <= 0.15 * MaximumDepth_m |    # Conserve les couches épilimnion (> 0 m)
+         Depth_m >= 0.90 * MaximumDepth_m)                   # Conserve les couches hypolimnion
+  ) %>%
+  mutate(
+    strate = case_when(
+      Depth_m > 1 & Depth_m <= 0.15 * MaximumDepth_m ~ "epi",  # Épilimnion si profondeur > 0 m et <= 25% profondeur max
+      Depth_m >= 0.90 * MaximumDepth_m ~ "hypo",               # Hypolimnion si profondeur >= 90% profondeur max
+      TRUE ~ NA_character_                                     # Autres cas mis à NA
+    )
+  ) %>%
+  ungroup()
+
+
+# Calculer les moyennes pour `epi` et `hypo`, en utilisant `reframe()`
+
+
+# Ajouter les colonnes supplémentaires en utilisant une jointure propre
+
+
+filtered_lakes <- mondial_filter %>%
+  filter(
+    Latitude_DD > 0,  # Lacs dans l'hémisphère Nord
+    SurfaceArea_ha > 0,  # Surface supérieure au 1er quartile34.4
+    MaximumDepth_m > 0,
+    MeanDepth_m > 0# Profondeur supérieure au 1er quartile10.67
+  ) %>%
+  group_by(LakeID,Month,strate) %>%
+  filter(n() >= 0) %>%  # Au moins 30 observations par lac par couche 60
+  ungroup()
+
+rm(mondial_filter)
+rm(metadata)
+
+head(filtered_lakes)
+# Remplacer les numéros par les noms de mois dans `pentes_lakes` ou `filtered_lakes`
+filtered_lakes <- filtered_lakes %>%
+  mutate(
+    Mois = factor(
+      as.character(Month), # Convertir les numéros en caractères
+      levels = as.character(1:12), # Spécifier l'ordre des mois
+      labels = c("Janvier", "Février", "Mars", "Avril", "Mai", "Juin",
+                 "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre")
+    )
+  )
+
+
+##MODELE####
+fdataG<-filtered_lakes
+# Initialiser un tableau pour stocker les pentes et leurs \(p\)-valeurs
+pentes_lakes <- tibble(
+  lake_id = character(),
+  Strate = character(),
+  Mois = integer(),
+  Pente = numeric(),
+  Sens_P_Value = numeric()
+)
+lake_ids <- unique(filtered_lakes$LakeID)
+# Boucle sur les identifiants de lacs
+for (lake in lake_ids) {
+  # Filtrer les données pour le lac actuel
+  filtered_data <- filtered_lakes %>% filter(LakeID == lake)
+  
+  # Vérifier les strates uniques
+  strates_lake <- unique(filtered_data$strate)
+  print(paste("Lac:", lake, "- Strates disponibles:", paste(strates_lake, collapse = ", ")))
+  
+  # Boucle sur chaque combinaison de strate et mois
+  for (strate in strates_lake) {
+    # Filtrer les données pour la strate actuelle
+    data_by_strate <- filtered_data %>% filter(strate == !!strate)
+    print(paste("Strate:", strate, "- Nombre d'observations:", nrow(data_by_strate)))
+    
+    for (mois in 1:12) {
+      # Filtrer les données pour le mois actuel
+      data_subset <- data_by_strate %>% filter(Month == mois)
+      print(paste("Mois:", mois, "- Observations:", nrow(data_subset)))
+      
+      # Vérifier s'il y a suffisamment de données pour le test
+      if (nrow(data_subset) < 1) next
+      
+      # Calculer la pente avec sens.slope
+      sens_slope_test <- tryCatch(
+        sens.slope(data_subset$Temp_C, data_subset$Year),
+        error = function(e) NULL
+      )
+      
+      # Extraire les résultats
+      sens_pente <- if (!is.null(sens_slope_test)) sens_slope_test$estimates else NA
+      sens_p_value <- if (!is.null(sens_slope_test)) sens_slope_test$p.value else NA
+      
+      # Ajouter les résultats dans le tableau
+      pentes_lakes <- bind_rows(
+        pentes_lakes,
+        tibble(
+          lake_id = lake,
+          Strate = strate,
+          Mois = mois,
+          Pente = sens_pente,
+          Sens_P_Value = sens_p_value
+        )
+      )
+    }
+  }
+}
+
+
+print(pentes_lakes)
+
+length(unique(pentes_lakes$lake_id))
+pentes_lakes<- pentes_lakes %>%
+  filter(!is.na(Pente)) %>%
+  filter(Sens_P_Value >= 0 & Sens_P_Value <= 0.05 & !is.na(Sens_P_Value))
+global<-pentes_lakes
+global <- global %>%
+  mutate(
+    Mois = factor(
+      as.character(Mois), # Convertir les numéros en caractères
+      levels = as.character(1:12), # Spécifier l'ordre des mois
+      labels = c("Janvier", "Février", "Mars", "Avril", "Mai", "Juin",
+                 "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre")
+    )
+  )
+###PLOT####
+####BOXPLOT AUGMENTATION#####
+pentes_lakes <- global
+
+plot_global <- ggplot(data = pentes_lakes) +
+  aes(x = Mois, y = Pente * 10, fill = Strate) +
+  geom_boxplot(width = 0.7, outlier.shape = NA, alpha = 0.8) +
+  stat_summary(
+    aes(group = Strate),
+    fun = mean, geom = "point", shape = 23, size = 3, color = "black", fill = "yellow",
+    position = position_dodge(width = 0.75), alpha = 0.6
+  ) +
+  scale_fill_manual(
+    values = c("epi" = "darkred", "hypo" = "lightblue"),
+    labels = c("epi" = "Epilimnion", "hypo" = "Hypolimnion")
+  ) +
+  coord_cartesian(ylim = c(-2.5, 2.5)) +
+  scale_y_continuous(breaks = seq(-2.5, 2.5, by = 0.5)) +
+  labs(
+    title = "A",
+    x = "",
+    y = NULL, # Pas de label Y ici
+    fill = "Strate"
+  ) +
+  theme_minimal() +geom_hline(yintercept = 0, color = "darkblue", linetype = "dashed")+
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    plot.title = element_text(size = 16, face = "bold", hjust = 0), # Titre aligné à gauche
+    legend.position = "none"
+  )
+
+plot_global
+
+
+
+
+####PLOT DESCRIPTION####
+p1global<-ggplot(filtered_lakes) +
+  aes(x = Year, fill = strate) +
+  geom_histogram(position = "dodge", bins = 20, color = "black", alpha = 0.7) +  # Ajout de bordures et transparence
+  geom_vline(
+    data = filtered_lakes %>%
+      group_by(Mois) %>%
+      summarise(median_year = median(Year, na.rm = TRUE)), 
+    aes(xintercept = median_year),
+    color = "orange", linetype = "dashed", linewidth = 0.8
+  ) +  # Ligne pointillée pour la médiane par facette
+  scale_fill_manual(values = c("darkred", "steelblue"), labels = c("Épilimnion", "Hypolimnion")) +  # Couleurs personnalisées
+  labs(
+    x = "Année",
+    y = "Nombre d'observations",
+    fill = "Strate"
+  ) +  # Étiquettes des axes et de la légende uniquement
+  theme_minimal(base_size = 14) +  # Thème minimaliste avec une taille de police lisible
+  theme(
+    text = element_text(size = 12),
+    axis.text.x = element_text(size = 12, angle = 45, hjust = 1),
+    plot.title = element_text(size = 16, face = "bold"),
+    plot.subtitle = element_text(size = 14),legend.position = "bottom", # Légende à droite,
+    axis.title = element_text(size = 14, face = "bold"),
+    strip.text = element_text(size = 12, face = "bold")
+  ) +
+  facet_wrap(vars(Mois), nrow = 4)  # Organisation en 4 lignes pour les facettes
+
+filtered_lakes <- filtered_lakes %>%
+  mutate(
+    Mois = factor(
+      Month, # Utiliser les numéros des mois
+      levels = 1:12, # Spécifier l'ordre des mois
+      labels = c("Janvier", "Février", "Mars", "Avril", "Mai", "Juin",
+                 "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre")
+    )
+  )
+filtered_lakes$Year<-as.numeric(filtered_lakes$Year)
+####PLOT LM DESCRIPTION####
+temp_filtered <- temp_filtered %>%
+  mutate(Mois = factor(Month, levels = 1:12, 
+                       labels = c("Janvier", "Février", "Mars", "Avril", "Mai", "Juin", 
+                                  "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre")))
+
+# Calcul des modèles linéaires pour chaque combinaison de strate et mois
+lm_results <- temp_filtered %>%
+  group_by(strate, Month) %>%
+  summarise(
+    model = list(lm(Temp_C ~ Year, data = cur_data())),
+    .groups = "drop"
+  )
+
+# Extraire les résumés du modèle pour obtenir le R²
+lm_summary <- lm_results %>%
+  mutate(
+    model_summary = purrr::map(model, broom::glance)  # Récupérer les statistiques globales du modèle
+  ) %>%
+  unnest(model_summary)  # Transformer en colonnes
+
+# Voir les résultats
+lm_summary %>%
+  select(strate, Month, r.squared, adj.r.squared, p.value)
+lm_summary <- lm_summary %>%
+  mutate(
+    annotation_text = paste0(
+      "Adj. R² = ", round(adj.r.squared, 3), 
+      "\nP = ", formatC(p.value, format = "e", digits = 1)  # P-valeur en notation scientifique
+    )
+  )
+lm_summary <- lm_summary %>%
+  mutate(Mois = factor(Month, levels = 1:12, 
+                       labels = c("Janvier", "Février", "Mars", "Avril", "Mai", "Juin", 
+                                  "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre")))
+
+
+
+p2global<-ggplot(temp_filtered) +
+  aes(x = Year, y = Temp_C, colour = strate) +
+  # Points de données brutes
+  geom_smooth(method = "lm", linewidth = 1, se = FALSE) +  # Régressions linéaires
+  scale_color_manual(
+    values = c("darkred", "steelblue"),  # Couleurs pour les strates
+    labels = c("Épilimnion", "Hypolimnion")
+  ) +
+  labs(
+    title ="A" ,
+    x = "",
+    y ="",
+    colour = "Strate"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    axis.text.x = element_text(size = 12, angle = 45, hjust = 1),
+    axis.title = element_text(size = 14, face = "bold"),
+    title = element_text(size = 14, face = "bold"),
+    strip.text = element_text(size = 12, face = "bold"),
+    legend.position = "none"
+  ) +
+  facet_wrap(~Mois, nrow = 3) +  # Facettes par mois
+  geom_text(
+    data = lm_summary %>%
+      filter(strate == "epi") %>%  # Filtrer les données pour Épilimnion
+      mutate(y_position = max(temp_filtered$Temp_C) - 1),  # Position verticale
+    aes(
+      x = min(temp_filtered$Year) + 1, 
+      y = y_position, 
+      label = annotation_text
+    ),
+    inherit.aes = FALSE,
+    colour = "darkred",  # Couleur rouge pour Épilimnion
+    hjust = 0, vjust = 1, size = 2.5, fontface = "italic"
+  ) +
+  # Annotation pour Hypolimnion
+  geom_text(
+    data = lm_summary %>%
+      filter(strate == "hypo") %>%  # Filtrer les données pour Hypolimnion
+      mutate(y_position = max(temp_filtered$Temp_C) - 1),  # Position verticale
+    aes(
+      x = min(temp_filtered$Year) + 2.5, 
+      y = y_position, 
+      label = annotation_text
+    ),
+    inherit.aes = FALSE,
+    colour = "steelblue",  # Couleur bleue pour Hypolimnion
+    hjust = -1, vjust = 1, size = 2.5, fontface = "italic"
+  )
+####EMMEANS####
+library(emmeans)
+library(car)
+lm_model <- lm(Temp_C ~ Year * Mois * strate, data = filtered_lakes)
+lm_summary<-summary(lm_model)
+lmdataframe<-as.data.frame(lm_summary$coefficients)
+model_stats <- data.frame(
+  R_Squared = lm_summary$r.squared,
+  Adjusted_R_Squared = lm_summary$adj.r.squared,
+  F_Statistic = lm_summary$fstatistic[1],
+  F_p_value = pf(lm_summary$fstatistic[1], 
+                 lm_summary$fstatistic[2], 
+                 lm_summary$fstatistic[3], 
+                 lower.tail = FALSE)
+)
+model_statsg<-model_stats
+write.csv(model_stats, "model_statsglobal.csv", row.names = FALSE)
+anova_results <- car::Anova(lm_model)
+
+# Convertir les résultats de l'ANOVA en un tableau de données
+anova_table <- as.data.frame(anova_results)
+
+# Ajouter une colonne pour les noms des facteurs (lignes)
+anova_table <- tibble::rownames_to_column(anova_table, var = "Factor")
+
+# Exporter en CSV
+write.csv(anova_table, "anova_resultsglobal.csv", row.names = FALSE)
+
+
+
+warming_rates <- emtrends(lm_model, ~ Mois *strate, var = "Year")
+summary(warming_rates, infer = c(TRUE, TRUE))
+warming_rates<-as.data.frame(summary(warming_rates, infer = c(TRUE, TRUE)))
+warming_rates <- warming_rates %>%
+  mutate(
+    lower.CL = Year.trend - 1.96 * SE,
+    upper.CL = Year.trend + 1.96 * SE
+  )
+warming_ratesG<-warming_rates
+write.csv(warming_rates, "emmeansglobal.csv", row.names = FALSE)
+residuals <- resid(lm_model)
+
+# Sous-échantillonner les résidus à une taille <= 5000
+set.seed(123)  # Pour reproductibilité
+sampled_residuals <- sample(residuals, size = 5000)
+
+# Effectuer le test de Shapiro-Wilk sur le sous-échantillon
+shapiro.test(sampled_residuals)
+plot(fitted(lm_model), residuals(lm_model), main = "Résidus vs valeurs ajustées")
+abline(h = 0, col = "red")
+# Tracer le graphique
+plotGemmeans <- ggplot(warming_rates, aes(x = Mois, y = Year.trend * 10, fill = strate)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  geom_errorbar(
+    aes(ymin = lower.CL * 10, ymax = upper.CL * 10),
+    width = 0.2,
+    position = position_dodge(0.9)
+  ) +
+  geom_text(
+    aes(label = ifelse(p.value < 0.05, paste0("p=", format(p.value, digits = 3)), "ns")),
+    position = position_dodge(0.9),
+    vjust = -0.5,
+    size = 3,
+    angle = 90
+  ) +
+  labs(
+    title = "A",
+    x = "",
+    y = ""
+  ) +
+  scale_fill_manual(
+    values = c("epi" = "darkred", "hypo" = "lightblue"),
+    guide = "none"  # Supprime explicitement la légende
+  ) +
+  theme(
+    text = element_text(size = 12),
+    axis.text.x = element_text(size = 12, angle = 45, hjust = 1),
+    plot.title = element_text(size = 16, face = "bold"),
+    plot.subtitle = element_text(size = 14),
+    legend.position = "none",  # Supprime la légende (option redondante pour s'assurer de la suppression)
+    axis.title = element_text(size = 14, face = "bold"),
+    strip.text = element_text(size = 12, face = "bold")
+  ) +
+  theme_hc()  # Utilisation d'un thème personnalisé
+
+plotGemmeans
+#NATIONAL ####
+setwd("~/Desktop/M2/miniprojetthonons")
+
+data_path <- "dataverse_files/02_Temperature_data/00_LakeTSim_SAFRAN_OKPdefault_data"
+metadatdatanatio <- read.delim(
+  "~/Desktop/M2/miniprojetthonons/dataverse_files/01_Lake_data.txt", # Chemin vers le fichier
+  header = TRUE,                      # Le fichier contient des en-têtes
+  sep = ";",                           # Le fichier utilise un séparateur par défaut (espaces ou tabulations)
+  stringsAsFactors = FALSE            # Empêche la conversion automatique en facteurs
+)
+# Obtenir la liste des fichiers .txt dans le dossier
+file_list <- list.files(path = data_path, pattern = "\\.txt$", full.names = TRUE)
+
+# Charger tous les fichiers dans une liste
+data_list <- lapply(file_list, function(file) {
+  # Lire le fichier avec espace comme séparateur
+  data <- read.table(file, header = TRUE, sep = "", stringsAsFactors = FALSE)
+  
+  # Convertir la colonne date en type Date
+  data$date <- as.Date(data$date)
+  
+  # Retourner le data.frame
+  return(data)
+})
+names(data_list) <- basename(file_list)
+
+# Vérifier les premières lignes du premier fichier
+head(data_list[[1]])
+combined_data <- bind_rows(data_list, .id = "source")
+# Vérifier la structure et les premières lignes
+print(combined_data)
+length(unique(combined_data$source))
+
+
+rm(file_list)
+rm(data_path)
+rm(data_list)
+
+combined_data <- combined_data %>%
+  pivot_longer(
+    cols = c(tepi, thyp),  
+    names_to = "strate",   
+    values_to = "temperature"  
+  ) %>%
+  mutate(strate = ifelse(strate == "tepi", "epi", "hypo"))
+monthly_data<-combined_data
+rm(combined_data)
+rm(metadatdatanatio)
+filtered_lakes<-c()
+filtered_lakes$strate<-monthly_data$strate
+filtered_lakes$Temp_C<-monthly_data$temperature
+filtered_lakes<-as.data.frame(filtered_lakes)
+filtered_lakes$Month_Year<-monthly_data$date
+filtered_lakes$Month_Year <- as.factor(filtered_lakes$Month_Year)
+filtered_lakes$Month_Year <- as.Date(paste0(filtered_lakes$Month_Year, "-01"), format = "%Y-%m-%d")
+filtered_lakes$LakeID<-monthly_data$source
+filtered_lakes$strate <- tolower(filtered_lakes$strate)
+filtered_lakes$datenum<-as.numeric(filtered_lakes$Month_Year+4018)
+
+
+# Assign seasons based on the month
+
+filtered_lakes$Year <- format(as.Date(filtered_lakes$Month_Year), "%Y")
+filtered_lakes <- filtered_lakes %>%
+  filter(Year >= 1960 & Year <= 2020)
+filtered_lakes <- filtered_lakes %>%
+  mutate(
+    Month = month(Month_Year)  # Extrait le mois sous forme numérique (1 = Janvier, 2 = Février, ...)
+  )
+rm(monthly_data)
+filtered_lakes$Month<-as.character(filtered_lakes$Month)
+filtered_lakes <- filtered_lakes %>%
+  group_by(LakeID, Year, Month, strate) %>%
+  summarise(
+    Temp_C = mean(Temp_C, na.rm = TRUE),  # Moyenne de la température
+    .groups = "drop"  # Pour éviter les groupes imbriqués
+  )
+filtered_lakes <- filtered_lakes %>%
+  mutate(
+    Mois = factor(
+      as.character(Month), # Convertir les numéros en caractères
+      levels = as.character(1:12), # Spécifier l'ordre des mois
+      labels = c("Janvier", "Février", "Mars", "Avril", "Mai", "Juin",
+                 "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre")
+    )
+  )
+##MODELE####
+
+
+filtered_lakes$Year<-as.numeric(filtered_lakes$Year)
+fdataN<-filtered_lakes
+# Initialiser un tableau pour stocker les pentes et leurs \(p\)-valeurs
+pentes_lakes <- tibble(
+  lake_id = character(),
+  Strate = character(),
+  Mois = integer(),
+  Pente = numeric(),
+  Sens_P_Value = numeric()
+)
+lake_ids <- unique(filtered_lakes$LakeID)
+# Boucle sur les identifiants de lacs
+for (lake in lake_ids) {
+  # Filtrer les données pour le lac actuel
+  filtered_data <- filtered_lakes %>% filter(LakeID == lake)
+  
+  # Vérifier les strates uniques
+  strates_lake <- unique(filtered_data$strate)
+  print(paste("Lac:", lake, "- Strates disponibles:", paste(strates_lake, collapse = ", ")))
+  
+  # Boucle sur chaque combinaison de strate et mois
+  for (strate in strates_lake) {
+    # Filtrer les données pour la strate actuelle
+    data_by_strate <- filtered_data %>% filter(strate == !!strate)
+    
+    
+    for (mois in 1:12) {
+      # Filtrer les données pour le mois actuel
+      data_subset <- data_by_strate %>% filter(Month == mois)
+      
+      
+      # Vérifier s'il y a suffisamment de données pour le test
+      if (nrow(data_subset) < 1) next
+      
+      # Calculer la pente avec sens.slope
+      sens_slope_test <- tryCatch(
+        sens.slope(data_subset$Temp_C, data_subset$Year),
+        error = function(e) NULL
+      )
+      
+      # Extraire les résultats
+      sens_pente <- if (!is.null(sens_slope_test)) sens_slope_test$estimates else NA
+      sens_p_value <- if (!is.null(sens_slope_test)) sens_slope_test$p.value else NA
+      print(sens_pente)
+      # Ajouter les résultats dans le tableau
+      pentes_lakes <- bind_rows(
+        pentes_lakes,
+        tibble(
+          lake_id = lake,
+          Strate = strate,
+          Mois = mois,
+          Pente = sens_pente,
+          Sens_P_Value = sens_p_value
+        )
+      )
+    }
+  }
+}
+
+
+print(pentes_lakes)
+pentes_lakes <- pentes_lakes %>%
+  mutate(Mois = factor(Mois, levels = 1:12, 
+                       labels = c("Janvier", "Février", "Mars", "Avril", "Mai", "Juin", 
+                                  "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre")))
+length(unique(pentes_lakes$lake_id))
+pentes_lakes<- pentes_lakes %>%
+  filter(!is.na(Pente)) %>%
+  filter(Sens_P_Value >= 0 & Sens_P_Value <= 0.05 & !is.na(Sens_P_Value))
+national<-pentes_lakes
+pentes_lakes <- pentes_lakes %>%
+  mutate(Mois = factor(Mois, levels = 1:12, 
+                       labels = c("Janvier", "Février", "Mars", "Avril", "Mai", "Juin", 
+                                  "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre")))
+filtered_lakes$Year<-as.numeric(filtered_lakes$Year)
+
+###PLOT####
+####BOXPLOT AUGMENTATION#####
+pentes_lakes <- national
+
+
+plot_national <- ggplot(data = pentes_lakes) +
+  aes(x = Mois, y = Pente * 10, fill = Strate) +
+  geom_boxplot(width = 0.7, outlier.shape = NA, alpha = 0.8) +
+  stat_summary(
+    aes(group = Strate),
+    fun = mean, geom = "point", shape = 23, size = 3, color = "black", fill = "yellow",
+    position = position_dodge(width = 0.75), alpha = 0.6
+  ) +geom_hline(yintercept = 0, color = "darkblue",linetype="dashed")+
+  scale_fill_manual(
+    values = c("epi" = "darkred", "hypo" = "lightblue"),
+    labels = c("epi" = "Epilimnion", "hypo" = "Hypolimnion")
+  ) +
+  coord_cartesian(ylim = c(-0.1, 0.7)) +
+  scale_y_continuous(breaks = seq(-0.5, 1, by = 0.1)) +
+  labs(
+    title = "B",
+    x = "Mois",
+    y = NULL, # Pas de label Y ici
+    fill = "Strate"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    plot.title = element_text(size = 16, face = "bold", hjust = 0), # Titre aligné à gauche
+    legend.position = "bottom",axis.title = element_text(size = 14, face = "bold")
+  )
+
+
+
+
+plot_national
+mean(national$Pente)
+mean(global$Pente)
+
+filtered_lakes <- filtered_lakes %>%
+  mutate(Mois = factor(Month, levels = 1:12, 
+                       labels = c("Janvier", "Février", "Mars", "Avril", "Mai", "Juin", 
+                                  "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre")))
+####PLOT DESCRIPTION####
+p1national<-ggplot(filtered_lakes) +
+  aes(x = Year, fill = strate) +
+  geom_histogram(position = "dodge", bins = 20, color = "black", alpha = 0.7) +  # Ajout de bordures et transparence
+  geom_vline(
+    data = filtered_lakes %>%
+      group_by(Mois) %>%
+      summarise(median_year = median(Year, na.rm = TRUE)), 
+    aes(xintercept = median_year),
+    color = "orange", linetype = "dashed", linewidth = 0.8
+  ) +  # Ligne pointillée pour la médiane par facette
+  scale_fill_manual(values = c("darkred", "steelblue"), labels = c("Épilimnion", "Hypolimnion")) +  # Couleurs personnalisées
+  labs(
+    x = "Année",
+    y = "Nombre d'observations",
+    fill = "Strate"
+  ) +  # Étiquettes des axes et de la légende uniquement
+  theme_minimal(base_size = 14) +  # Thème minimaliste avec une taille de police lisible
+  theme(
+    text = element_text(size = 12),
+    axis.text.x = element_text(size = 12, angle = 45, hjust = 1),
+    plot.title = element_text(size = 16, face = "bold"),
+    plot.subtitle = element_text(size = 14),legend.position = "bottom", # Légende à droite,
+    axis.title = element_text(size = 14, face = "bold"),
+    strip.text = element_text(size = 12, face = "bold")
+  ) +
+  facet_wrap(vars(Mois), nrow = 4)  # Organisation en 4 lignes pour les facettes
+
+
+
+####PLOT LM DESCRIPTION ####
+
+filtered_lakes$Year<-as.numeric(filtered_lakes$Year)
+# Calcul des modèles linéaires pour chaque combinaison de strate et mois
+lm_results <- filtered_lakes %>%
+  group_by(strate, Month) %>%
+  summarise(
+    model = list(lm(Temp_C ~ Year, data = pick(everything()))),  # Utilisation de pick() à la place de cur_data()
+    .groups = "drop"
+  )
+
+
+# Extraire les résumés du modèle pour obtenir le R²
+lm_summary <- lm_results %>%
+  mutate(
+    model_summary = purrr::map(model, broom::glance)  # Récupérer les statistiques globales du modèle
+  ) %>%
+  unnest(model_summary)  # Transformer en colonnes
+rm(lm_results)
+# Voir les résultats
+lm_summary %>%
+  select(strate, Month, r.squared, adj.r.squared, p.value)
+lm_summary <- lm_summary %>%
+  mutate(
+    annotation_text = paste0(
+      "Adj. R² = ", round(adj.r.squared, 3), 
+      "\nP = ", formatC(p.value, format = "e", digits = 1)  # P-valeur en notation scientifique
+    )
+  )
+lm_summary <- lm_summary %>%
+  mutate(Mois = factor(Month, levels = 1:12, 
+                       labels = c("Janvier", "Février", "Mars", "Avril", "Mai", "Juin", 
+                                  "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre")))
+
+
+
+p2natio<-ggplot(filtered_lakes) +
+  aes(x = Year, y = Temp_C, colour = strate) +
+  # Points de données brutes
+  geom_smooth(method = "lm", linewidth = 1, se = FALSE) +  # Régressions linéaires
+  scale_color_manual(
+    values = c("darkred", "steelblue"),  # Couleurs pour les strates
+    labels = c("Épilimnion", "Hypolimnion")
+  ) +
+  labs(
+    title="B",
+    x = "Année",
+    y = "",
+    colour = "Strate"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    axis.text.x = element_text(size = 12, angle = 45, hjust = 1),
+    axis.title = element_text(size = 14, face = "bold"),
+    title = element_text(size = 14, face = "bold"),
+    strip.text = element_text(size = 12, face = "bold"),
+    legend.position = "bottom"
+  ) +
+  facet_wrap(~Mois, nrow = 3) +  # Facettes par mois
+  geom_text(
+    data = lm_summary %>%
+      filter(strate == "epi") %>%  # Filtrer les données pour Épilimnion
+      mutate(y_position = max(filtered_lakes$Temp_C) - 1),  # Position verticale
+    aes(
+      x = min(filtered_lakes$Year) + 1, 
+      y = y_position, 
+      label = annotation_text
+    ),
+    inherit.aes = FALSE,
+    colour = "darkred",  # Couleur rouge pour Épilimnion
+    hjust = 0, vjust = 1, size = 2.5, fontface = "italic"
+  ) +
+  # Annotation pour Hypolimnion
+  geom_text(
+    data = lm_summary %>%
+      filter(strate == "hypo") %>%  # Filtrer les données pour Hypolimnion
+      mutate(y_position = max(filtered_lakes$Temp_C) - 1),  # Position verticale
+    aes(
+      x = min(filtered_lakes$Year) + 2.5, 
+      y = y_position, 
+      label = annotation_text
+    ),
+    inherit.aes = FALSE,
+    colour = "steelblue",  # Couleur bleue pour Hypolimnion
+    hjust = -1, vjust = 1, size = 2.5, fontface = "italic"
+  )
+
+
+
+####EMMEANS####
+library(emmeans)
+library(car)
+lm_model <- lm(Temp_C ~ Year * Mois * strate, data = filtered_lakes)
+lm_summary<-summary(lm_model)
+lmdataframe<-as.data.frame(lm_summary$coefficients)
+model_stats <- data.frame(
+  R_Squared = lm_summary$r.squared,
+  Adjusted_R_Squared = lm_summary$adj.r.squared,
+  F_Statistic = lm_summary$fstatistic[1],
+  F_p_value = pf(lm_summary$fstatistic[1], 
+                 lm_summary$fstatistic[2], 
+                 lm_summary$fstatistic[3], 
+                 lower.tail = FALSE)
+)
+model_statsn<-model_stats
+write.csv(model_stats, "model_statsnational.csv", row.names = FALSE)
+anova_results <- car::Anova(lm_model)
+
+# Convertir les résultats de l'ANOVA en un tableau de données
+anova_table <- as.data.frame(anova_results)
+
+# Ajouter une colonne pour les noms des facteurs (lignes)
+anova_table <- tibble::rownames_to_column(anova_table, var = "Factor")
+
+# Exporter en CSV
+write.csv(anova_table, "anova_resultsnatioanl.csv", row.names = FALSE)
+
+
+
+warming_rates <- emtrends(lm_model, ~ Mois *strate, var = "Year")
+summary(warming_rates, infer = c(TRUE, TRUE))
+warming_rates<-as.data.frame(summary(warming_rates, infer = c(TRUE, TRUE)))
+warming_rates <- warming_rates %>%
+  mutate(
+    lower.CL = Year.trend - 1.96 * SE,
+    upper.CL = Year.trend + 1.96 * SE
+  )
+warming_ratesN<-warming_rates
+write.csv(warming_rates, "emmeansnatio.csv", row.names = FALSE)
+residuals <- resid(lm_model)
+
+# Sous-échantillonner les résidus à une taille <= 5000
+set.seed(123)  # Pour reproductibilité
+sampled_residuals <- sample(residuals, size = 5000)
+
+# Effectuer le test de Shapiro-Wilk sur le sous-échantillon
+shapiro.test(sampled_residuals)
+plot(fitted(lm_model), residuals(lm_model), main = "Résidus vs valeurs ajustées")
+abline(h = 0, col = "red")
+# Tracer le graphique
+plotNemmeans<-ggplot(warming_rates, aes(x = Mois, y = Year.trend*10, fill = strate)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  geom_errorbar(
+    aes(ymin = lower.CL*10, ymax = upper.CL*10),
+    width = 0.2,
+    position = position_dodge(0.9)
+  ) +
+  geom_text(
+    aes(label = ifelse(p.value < 0.05, paste0("p=", format(p.value, digits = 3)), "ns")),
+    position = position_dodge(0.9),
+    vjust = -0.5,
+    size = 3,angle = 90
+  ) +
+  labs(
+    title = "B",
+    x = "Mois",
+    y = NULL, # Pas de label Y ici
+    fill = "Strate"
+  ) +
+  scale_fill_manual(
+    values = c("epi" = "darkred", "hypo" = "lightblue"),
+    labels = c("epi" = "Epilimnion", "hypo" = "Hypolimnion")
+  )+
+  theme(
+    text = element_text(size = 12),
+    axis.text.x = element_text(size = 12, angle = 45, hjust = 1),
+    plot.title = element_text(size = 16, face = "bold"),
+    plot.subtitle = element_text(size = 14),legend.position = "right", # Légende à droite,
+    axis.title = element_text(size = 14, face = "bold"),
+    strip.text = element_text(size = 12, face = "bold")
+  )+theme_hc()
+plotNemmeans
+#MERGING####
+
+national<-as.data.frame(national)
+global$source <- "global"
+national$source <- "national"
+str(global)
+str(national)
+# Fusionner les deux dataframes
+merged <- rbind(global, national)
+
+merged <- merged %>%
+  dplyr::mutate(Strate = dplyr::recode(Strate, "epi" = "Epilimnion", "hypo" = "Hypolimnion"))
+
+merged <- merged %>%
+  mutate(Mois = factor(Mois, levels = c(
+    "Janvier", "Février", "Mars", "Avril", "Mai", "Juin",
+    "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre"
+  )))
+##CALCUL####
+result_summary <- merged %>%
+  group_by(Strate, Mois, source) %>%
+  summarise(
+    mean_pente = mean(Pente, na.rm = TRUE),   # Moyenne
+    median_pente = median(Pente, na.rm = TRUE), # Médiane
+    .groups = "drop"                         # Évite les messages sur le regroupement
+  )
+
+# Calcul des p-values pour chaque combinaison de Strate et Mois
+kruskal_results <- merged %>%
+  group_by(Strate, Mois) %>%
+  summarise(
+    kruskal_p_value = kruskal.test(Pente ~ source, data = cur_data())$p.value,
+    .groups = "drop"
+  )
+kruskal_results2 <- merged %>%
+  group_by(source, Mois) %>%
+  summarise(
+    kruskal_p_value = kruskal.test(Pente ~ Strate, data = cur_data())$p.value,
+    .groups = "drop"
+  )
+
+# Joindre les résultats de Kruskal-Wallis au tableau pivoté
+result_table <- result_summary %>%
+  pivot_wider(
+    names_from = source, 
+    values_from = c(mean_pente, median_pente)
+  ) %>%
+  left_join(kruskal_results, by = c("Strate", "Mois")) %>% # Ajout des p-values
+  arrange(Strate, Mois)
+
+# Afficher le tableau final
+print(result_table)
+write.csv(result_table, "result_table_with_kruskal.csv", row.names = FALSE)
+
+result_table2 <- result_summary %>%
+  pivot_wider(
+    names_from = Strate, 
+    values_from = c(mean_pente, median_pente)
+  ) %>%
+  left_join(kruskal_results2, by = c("source", "Mois")) %>% # Ajout des p-values
+  arrange(source, Mois)
+
+# Afficher le tableau final
+print(result_table2)
+write.csv(result_table2, "result_table_with_kruskal2.csv", row.names = FALSE)
+
+
+
+##PLOT####
+
+###GDESCRIPTION####
+
+
+merged %>%
+  filter(Pente >= -1 & Pente <= 1) %>%
+  ggplot() +
+  aes(x = Strate, y = Pente * 10, fill = source) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.8) + # Transparence pour plus de lisibilité
+  scale_fill_manual(values = c("global" = "#1f78b4", "national" = "#33a02c"), # Couleurs personnalisées
+                    labels = c("global" = "Globale", "national" = "Nationale")) + # Palette personnalisée
+  theme_minimal() +
+  facet_wrap(vars(Mois), ncol = 3) + # Nombre de colonnes pour une meilleure disposition
+  coord_cartesian(ylim = c(-1, 1)) + # Limiter l'axe y pour exclure les extrêmes
+  labs(
+    
+    x = "Strate",
+    y = "Variation de température (°C/décennie)",
+    fill = "Provenance des données"
+  ) +
+  theme(
+    text = element_text(size = 12),
+    axis.text.x = element_text(size = 12, angle = 45, hjust = 1),
+    plot.title = element_text(size = 16, face = "bold"),
+    plot.subtitle = element_text(size = 14),legend.position = "right", # Légende à droite,
+    axis.title = element_text(size = 14, face = "bold"),
+    strip.text = element_text(size = 12, face = "bold")
+  )+theme_hc()+stat_summary(
+    aes(group = interaction(Strate, source)), # Groupement des points moyens par combinaison
+    fun = mean, geom = "point", shape = 23, size = 3, color = "black", fill = "yellow", # Moyennes en losanges
+    position = position_dodge(width = 0.75), alpha = 0.8 # Décalage horizontal et transparence
+  )
+
+
+
+
+###BOXPLOT####
+final_plot <- (plot_global / plot_national) +
+  plot_layout(guides = "collect") & # Collecter la légende
+  theme(
+    legend.position = "bottom", # Placer la légende en bas
+    plot.margin = margin(t = 0, r = 0, b = 0, l = 0) # Ajouter de l'espace à gauche pour le label Y
+  )
+
+# Ajouter le label Y globalement avec `draw_label`
+final_with_y <- ggdraw() +
+  draw_label("Variation de température (°C / décennie)", angle = 90, fontface = "bold", size = 14, x = 0.02, y = 0.5) +
+  draw_plot(final_plot, x = 0.1, y = 0, width = 0.9, height = 1)
+
+# Afficher le graphique final
+final_with_y
+
+
+###LM DESCRITPITION ####
+
+final_plot <- (p2global / p2natio) +
+  plot_layout(guides = "collect") & # Collecter la légende
+  theme(
+    legend.position = "bottom", # Placer la légende en bas
+    plot.margin = margin(t = 0, r = 0, b = 0, l = 0) # Ajouter de l'espace à gauche pour le label Y
+  )
+
+# Ajouter le label Y globalement avec `draw_label`
+final_with_y <- ggdraw() +
+  draw_label("Température (°C)", angle = 90, fontface = "bold", size = 14, x = 0.02, y = 0.5) +
+  draw_plot(final_plot, x = 0.1, y = 0, width = 0.9, height = 1)
+
+# Afficher le graphique final
+final_with_y
+###EMMEANS####
+
+final_plot_emmeans <- (plotGemmeans / plotNemmeans) +
+  plot_layout(guides = "collect") & # Collecter la légende
+  theme(
+    legend.position = "bottom", # Placer la légende en bas
+    plot.margin = margin(t = 0, r = 0, b = 0, l = 0) # Ajouter de l'espace à gauche pour le label Y
+  )
+
+# Ajouter le label Y globalement avec `draw_label`
+final_with_y_emmeans <- ggdraw() +
+  draw_label("Variation de température (°C / décennie)", angle = 90, fontface = "bold", size = 14, x = 0.02, y = 0.5) +
+  draw_plot(final_plot_emmeans, x = 0.1, y = 0, width = 0.9, height = 1)
+
+
+
+
+###KERNEL####
+
+kernelglobal<-merged %>%
+  filter(Pente >= -0.5 & Pente <= 0.5) %>%
+  filter(source == "global") %>%
+  ggplot() +
+  aes(x = Pente, fill = Strate) +
+  geom_density(alpha = 0.6, color = "black") +
+  scale_fill_hue(direction = 1) +
+  theme_minimal() +scale_fill_manual(
+    values = c("Epilimnion" = "darkred", "Hypolimnion" = "lightblue"),
+    labels = c("Epilimnion", "Hypolimnion")
+  )+
+  facet_wrap(~Mois,scales = "free")+theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    plot.title = element_text(size = 16, face = "bold", hjust = 0), # Titre aligné à gauche
+    legend.position = "none",axis.title = element_text(size = 14, face = "bold")
+  )+labs(
+    title = "A",
+    x = "",
+    y = NULL, # Pas de label Y ici
+    fill = "Strate"
+  )+geom_vline(xintercept = 0,color = "darkblue", linetype = "dashed")
+
+
+kernelnational<-merged %>%
+  filter(Pente >= -0.8 & Pente <= 0.8) %>%
+  filter(source == "national") %>%
+  ggplot() +
+  aes(x = Pente, fill = Strate) +
+  geom_density(alpha = 0.6, color = "black") +
+  scale_fill_hue(direction = 1) +
+  theme_minimal() +scale_fill_manual(
+    values = c("Epilimnion" = "darkred", "Hypolimnion" = "lightblue"),
+    labels = c("Epilimnion", "Hypolimnion")
+  )+
+  facet_wrap(~Mois,scales = "free")+theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    plot.title = element_text(size = 16, face = "bold", hjust = 0), # Titre aligné à gauche
+    legend.position = "bottom",axis.title = element_text(size = 14, face = "bold")
+  )+labs(
+    title = "B",
+    x = "Variation de température (°C/an)",
+    y = NULL, # Pas de label Y ici
+    fill = "Strate"
+  )+geom_vline(xintercept = 0,color = "darkblue", linetype = "dashed")
+
+
+
+final_plot <- (kernelglobal / kernelnational) +
+  plot_layout(guides = "collect") & # Collecter la légende
+  theme(
+    legend.position = "bottom", # Placer la légende en bas
+    plot.margin = margin(t = 0, r = 0, b = 0, l = 0) # Ajouter de l'espace à gauche pour le label Y
+  )
+
+# Ajouter le label Y globalement avec `draw_label`
+final_with_y <- ggdraw() +
+  draw_label("Densité de kernel", angle = 90, fontface = "bold", size = 14, x = 0.02, y = 0.5) +
+  draw_plot(final_plot, x = 0.1, y = 0, width = 0.9, height = 1)
+
+# Afficher le graphique final
+final_with_y
+
+
+###MERGED LINEAR EMMEANS####
+fdataG$source<-"global"
+fdataN$source<-"national"
+common_columns <- intersect(names(fdataN), names(fdataG))
+
+# Conserver uniquement les colonnes communes dans chaque dataframe
+fdataN_common <- fdataN[, common_columns, drop = FALSE]
+fdataG_common <- fdataG[, common_columns, drop = FALSE]
+
+# Fusionner les deux dataframes en une seule table
+fdatamerged <- rbind(fdataN_common, fdataG_common)
+m1<-lm(Temp_C~Year*strate*Mois*source , data=fdatamerged)
+plot(resid(m1))
+summary(m1)
+hist(resid(m1),breaks=1000)
+plot(fitted(m1), resid(m1), 
+     main = "Résidus vs valeurs ajustées", 
+     xlab = "Valeurs ajustées", 
+     ylab = "Résidus", 
+     pch = 20, col = "blue")
+abline(h = 0, col = "red", lwd = 2)
+
+qqnorm(resid(m1), main = "Q-Q Plot des résidus")
+qqline(resid(m1), col = "red")
+
+
+residus <- resid(m1)
+
+set.seed(498)  # Pour la reproductibilité
+
+shapiro_results <- replicate(
+  1000, {
+    sample_resid <- sample(residus, size = min(length(residus), 50), replace = FALSE)  # Échantillon de taille 50
+    shapiro.test(sample_resid)$p.value
+  }
+)
+summary(shapiro_results)
+
+
+trend_results <- emtrends(m1, ~ Mois * strate * source, var = "Year")
+
+# Comparaison des groupes spécifiques
+# Comparaisons pairwise par Mois et source
+results_by_source <- contrast(trend_results, method = "pairwise", by = c("Mois", "source"))
+
+# Comparaisons pairwise par Mois et strate
+results_by_strate <- contrast(trend_results, method = "pairwise", by = c("Mois", "strate"))
+results_source_df <- as.data.frame(results_by_source)
+results_strate_df <- as.data.frame(results_by_strate)
+
+results_source_df %>%
+  kbl(caption = "Comparaisons pairwise par Mois et source", digits = 3) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = FALSE)
+
+# Tableau pour les résultats par strate
+results_strate_df %>%
+  kbl(caption = "Comparaisons pairwise par Mois et strate", digits = 3) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = FALSE)
+
+write.csv(results_source_df, "results_by_source.csv", row.names = FALSE)
+write.csv(results_strate_df, "results_by_strate.csv", row.names = FALSE)
+#CARTOGRAPHIE####
+##GLOBAL####
+pentes_lakes<-global
+valid_months <- pentes_lakes %>%
+  group_by(lake_id, Mois) %>%
+  summarise(
+    has_epi = any(Strate == "epi"),
+    has_hypo = any(Strate == "hypo"),
+    .groups = "drop"
+  ) %>%
+  filter(has_epi & has_hypo) %>% # Conserver seulement les mois avec les deux strates
+  select(lake_id, Mois)
+
+# Étape 2 : Filtrer les données pour ne conserver que les observations valides
+filtered_data <- pentes_lakes %>%
+  inner_join(valid_months, by = c("lake_id", "Mois"))
+
+# Étape 3 : Séparer les données pour les strates epi et hypo
+epi_data <- filtered_data %>%
+  filter(Strate == "epi") %>%
+  select(lake_id, Mois, Pente) %>%
+  rename(Pente_epi = Pente)
+
+hypo_data <- filtered_data %>%
+  filter(Strate == "hypo") %>%
+  select(lake_id, Mois, Pente) %>%
+  rename(Pente_hypo = Pente)
+
+# Étape 4 : Joindre les deux sous-ensembles de données
+merged_data <- epi_data %>%
+  inner_join(hypo_data, by = c("lake_id", "Mois"))
+
+# Étape 5 : Calculer la différence en pourcentage
+result <- merged_data %>%
+  mutate(Diff_Pct = ((Pente_epi - Pente_hypo) / Pente_hypo) * 100)
+epi_hypo_diff<-result
+epi_hypo_diff$LakeID<-epi_hypo_diff$lake_id
+metadata <- read.csv("~/Desktop/M2/miniprojetthonons/edi.1530.1/lake_metadata_EDI.csv", stringsAsFactors = FALSE)
+epi_hypo_diff <- epi_hypo_diff %>%
+  left_join(metadata, by = "LakeID")
+library(maps)  # Pour les données géographiques de base
+
+# Charger les données géographiques du monde
+world_map <- map_data("world")
+
+# Créer la carte avec des facettes par saison
+# Supposons que vous souhaitiez éliminer les points qui ont des valeurs extrêmes dans "Difference_Pourcentage"
+
+epi_hypo_diff_filtered <- epi_hypo_diff %>%
+  filter(
+    Diff_Pct > -200 & 
+      Diff_Pct < 200
+  )
+# Carte mise à jour avec les données filtrées
+map <- ggplot() + 
+  # Fond de carte
+  geom_polygon(
+    data = world_map,
+    aes(x = long, y = lat, group = group),
+    alpha = 0.5,
+    fill = "grey90", 
+    color = "white"
+  ) +
+  # Ajouter les points des lacs avec une forme de triangle
+  geom_point(
+    data = epi_hypo_diff_filtered,
+    aes(
+      x = Longitude_DD,
+      y = Latitude_DD,
+      color = Diff_Pct
+    ),
+    alpha = 0.7,
+    size = 1,
+    shape = 17  # Forme triangle vers le haut
+  ) +
+  # Gradient de couleur
+  scale_color_gradient2(
+    low = "blue",      # Couleur pour les valeurs faibles
+    mid = "white",     # Couleur neutre au centre
+    high = "red",      # Couleur pour les valeurs élevées
+    midpoint = 0,      # Valeur centrale de la transition
+    name = "Différence de\nréchauffement\n(%)" # Label personnalisé
+  ) +
+  # Ajout de titres et légendes
+  labs(
+    
+    
+    x = "Longitude",
+    y = "Latitude",
+    color = "Différence de\nréchauffement\n(%)"
+  ) +
+  # Facette pour séparer par saison
+  facet_wrap(~Mois) +
+  # Thème de la carte
+  theme_minimal() +
+  theme(
+    panel.background = element_rect(fill = "lightblue"),
+    legend.position = "right"
+  )
+
+map
+
+
+
+##NATIONAL####
+
+metadatdatanatio <- read.delim(
+  "~/Desktop/M2/miniprojetthonons/dataverse_files/01_Lake_data.txt", # Chemin vers le fichier
+  header = TRUE,                      # Le fichier contient des en-têtes
+  sep = ";",                           # Le fichier utilise un séparateur par défaut (espaces ou tabulations)
+  stringsAsFactors = FALSE            # Empêche la conversion automatique en facteurs
+)
+metadatdatanatio$LakeID<-metadatdatanatio$Lake_code
+pentes_lakes<-national
+valid_months <- pentes_lakes %>%
+  group_by(lake_id, Mois) %>%
+  summarise(
+    has_epi = any(Strate == "epi"),
+    has_hypo = any(Strate == "hypo"),
+    .groups = "drop"
+  ) %>%
+  filter(has_epi & has_hypo) %>% # Conserver seulement les mois avec les deux strates
+  select(lake_id, Mois)
+
+# Étape 2 : Filtrer les données pour ne conserver que les observations valides
+filtered_data <- pentes_lakes %>%
+  inner_join(valid_months, by = c("lake_id", "Mois"))
+
+# Étape 3 : Séparer les données pour les strates epi et hypo
+epi_data <- filtered_data %>%
+  filter(Strate == "epi") %>%
+  select(lake_id, Mois, Pente) %>%
+  rename(Pente_epi = Pente)
+
+hypo_data <- filtered_data %>%
+  filter(Strate == "hypo") %>%
+  select(lake_id, Mois, Pente) %>%
+  rename(Pente_hypo = Pente)
+
+# Étape 4 : Joindre les deux sous-ensembles de données
+merged_data <- epi_data %>%
+  inner_join(hypo_data, by = c("lake_id", "Mois"))
+
+# Étape 5 : Calculer la différence en pourcentage
+result <- merged_data %>%
+  mutate(Diff_Pct = ((Pente_epi - Pente_hypo) / Pente_hypo) * 100)
+epi_hypo_diff<-result
+epi_hypo_diff$LakeID<-epi_hypo_diff$lake_id
+
+epi_hypo_diff <- epi_hypo_diff %>%
+  mutate(Lake_code = str_remove(LakeID, "^temp_"),  # Supprimer le préfixe 'temp_'
+         Lake_code = str_remove(Lake_code, "\\.txt$"))
+
+epi_hypo_diff <- epi_hypo_diff %>%
+  left_join(metadatdatanatio, by = "Lake_code")
+library(maps)  # Pour les données géographiques de base
+
+# Charger les données géographiques du monde
+world_map <- map_data("world")
+
+# Créer la carte avec des facettes par saison
+# Supposons que vous souhaitiez éliminer les points qui ont des valeurs extrêmes dans "Difference_Pourcentage"
+
+epi_hypo_diff_filtered <- epi_hypo_diff %>%
+  filter(
+    Diff_Pct > -300 & 
+      Diff_Pct < 300
+  )
+# Carte mise à jour avec les données filtrées
+map <- ggplot() + 
+  # Fond de carte
+  geom_polygon(
+    data = world_map,
+    aes(x = long, y = lat, group = group),
+    alpha = 0.5,
+    fill = "grey90", 
+    color = "white"
+  ) +
+  # Ajouter les points des lacs avec une forme de triangle
+  geom_point(
+    data = epi_hypo_diff_filtered,
+    aes(
+      x = Longitude_deg,
+      y = Latitude_deg,
+      color = Diff_Pct
+    ),
+    alpha = 0.7,
+    size = 1,
+    shape = 17  # Forme triangle vers le haut
+  ) +
+  # Gradient de couleur
+  scale_color_gradient2(
+    low = "blue",      # Couleur pour les valeurs faibles
+    mid = "white",     # Couleur neutre au centre
+    high = "red",      # Couleur pour les valeurs élevées
+    midpoint = 0,      # Valeur centrale de la transition
+    name = "Différence de\nréchauffement\n(%)" # Label personnalisé
+  ) +
+  # Ajout de titres et légendes
+  labs(
+    
+    
+    x = "Longitude",
+    y = "Latitude",
+    color = "Différence de\nréchauffement\n(%)"
+  ) +
+  coord_quickmap(
+    xlim = c(-5, 10),   # Longitude entre -5° et 10° (France métropolitaine)
+    ylim = c(41, 51)    # Latitude entre 41° et 51° (France métropolitaine)
+  ) +
+  # Facette pour séparer par saison
+  facet_wrap(~Mois) +
+  # Thème de la carte
+  theme_minimal() +
+  theme(
+    panel.background = element_rect(fill = "lightblue"),
+    legend.position = "right"
+  )
+
+map
+
+
+
+
+
+#IDEE####
+
+#Sortir les resultat des sens.slope par lac #
+
+#mineralisation
+
+#CARBON####
+
+bathymetry_EDI <- read_csv("edi.1530.1/bathymetry_EDI.csv")
+lake_metadata_EDI <- read_csv("edi.1530.1/lake_metadata_EDI.csv")
+carbonglobal<- bathymetry_EDI %>%
+  left_join(lake_metadata_EDI, by = "LakeID")
+
+model_metrics <- carbonglobal %>%
+  group_by(LakeID) %>%                # Grouper par lac
+  summarize(
+    pente = coef(lm(Depth_m ~ Area_m2))[2],  # Extraire la pente
+    intercept = coef(lm(Depth_m ~ Area_m2))[1],  # Extraire l'intercept
+    R2 = summary(lm(Depth_m ~ Area_m2))$r.squared,  # Extraire le R²
+    p_value = summary(lm(Depth_m ~ Area_m2))$coefficients[2, 4]  # p-value de la pente
+  )
+carbonglobal<- carbonglobal %>%
+  left_join(model_metrics, by = "LakeID")
+# Afficher les métriques pour chaque lac
+print(model_metrics)
+carbonglobal$area_ha<-(carbonglobal$Area_m2 / 10000)
+
+# Afficher un aperçu des données combinées
+carbonglobal <- carbonglobal %>%
+  filter(
+    (Depth_m <= 0.15 * MaximumDepth_m & Depth_m > 0) |   # Garder les couches inférieures à 0.15 de Zmax sauf 0
+      (Depth_m >= 0.90 * MaximumDepth_m & Depth_m < MaximumDepth_m)  # Garder les couches supérieures à 0.90 sauf Zmax
+  )
+
+# Identifier la valeur la plus basse pour chaque catégorie (partie haute/basse)
+carbonglobal <- carbonglobal %>%
+  mutate(strate = ifelse(Depth_m <= 0.15 * MaximumDepth_m, "epi", "hypo")) %>%  # Ajouter une colonne pour partie
+  group_by(LakeID, strate) %>%  # Grouper par lac et partie (haute ou basse)
+  slice_min(order_by = Depth_m, n = 1) %>%  # Conserver la valeur la plus basse
+  ungroup()
+
+merged
+
+##NATIONAL####
+###DATA####
+setwd("~/Desktop/M2/miniprojetthonons")
+
+data_path <- "dataverse_files/02_Temperature_data/00_LakeTSim_SAFRAN_OKPdefault_data"
+metadatdatanatio <- read.delim(
+  "~/Desktop/M2/miniprojetthonons/dataverse_files/01_Lake_data.txt", # Chemin vers le fichier
+  header = TRUE,                      # Le fichier contient des en-têtes
+  sep = ";",                           # Le fichier utilise un séparateur par défaut (espaces ou tabulations)
+  stringsAsFactors = FALSE            # Empêche la conversion automatique en facteurs
+)
+# Obtenir la liste des fichiers .txt dans le dossier
+file_list <- list.files(path = data_path, pattern = "\\.txt$", full.names = TRUE)
+
+# Charger tous les fichiers dans une liste
+data_list <- lapply(file_list, function(file) {
+  # Lire le fichier avec espace comme séparateur
+  data <- read.table(file, header = TRUE, sep = "", stringsAsFactors = FALSE)
+  
+  # Convertir la colonne date en type Date
+  data$date <- as.Date(data$date)
+  
+  # Retourner le data.frame
+  return(data)
+})
+names(data_list) <- basename(file_list)
+
+# Vérifier les premières lignes du premier fichier
+head(data_list[[1]])
+combined_data <- bind_rows(data_list, .id = "source")
+# Vérifier la structure et les premières lignes
+head(combined_data)
+rm(file_list)
+rm(data_path)
+rm(data_list)
+
+combined_data <- combined_data %>%
+  pivot_longer(
+    cols = c(tepi, thyp),  
+    names_to = "strate",   
+    values_to = "temperature"  
+  ) %>%
+  mutate(strate = ifelse(strate == "tepi", "epi", "hypo"))
+monthly_data<-combined_data
+rm(combined_data)
+rm(metadatdatanatio)
+filtered_lakes<-c()
+filtered_lakes$strate<-monthly_data$strate
+filtered_lakes$Temp_C<-monthly_data$temperature
+filtered_lakes<-as.data.frame(filtered_lakes)
+filtered_lakes$Month_Year<-monthly_data$date
+filtered_lakes$Month_Year <- as.factor(filtered_lakes$Month_Year)
+filtered_lakes$Month_Year <- as.Date(paste0(filtered_lakes$Month_Year, "-01"), format = "%Y-%m-%d")
+filtered_lakes$LakeID<-monthly_data$source
+filtered_lakes$strate <- tolower(filtered_lakes$strate)
+filtered_lakes$datenum<-as.numeric(filtered_lakes$Month_Year+4018)
+
+
+# Assign seasons based on the month
+
+filtered_lakes$Year <- format(as.Date(filtered_lakes$Month_Year), "%Y")
+filtered_lakes <- filtered_lakes %>%
+  filter(Year >= 1960 & Year <= 2020)
+filtered_lakes <- filtered_lakes %>%
+  mutate(
+    Month = month(Month_Year)  # Extrait le mois sous forme numérique (1 = Janvier, 2 = Février, ...)
+  )
+rm(monthly_data)
+filtered_lakes$Month<-as.character(filtered_lakes$Month)
+filtered_lakes <- filtered_lakes %>%
+  group_by(LakeID, Year, Month, strate) %>%
+  summarise(
+    Temp_C = mean(Temp_C, na.rm = TRUE),  # Moyenne de la température
+    .groups = "drop"  # Pour éviter les groupes imbriqués
+  )
+filtered_lakes <- filtered_lakes %>%
+  mutate(
+    Mois = factor(
+      as.character(Month), # Convertir les numéros en caractères
+      levels = as.character(1:12), # Spécifier l'ordre des mois
+      labels = c("Janvier", "Février", "Mars", "Avril", "Mai", "Juin",
+                 "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre")
+    )
+  )
+
+
+filtered_lakes$Year<-as.numeric(filtered_lakes$Year)
+mean_temp_2020 <- filtered_lakes %>%
+  filter(Year == 2010) %>%                   # Filtrer pour l'année 2020
+  group_by(LakeID, Mois, strate) %>%         # Grouper par lac, mois, et strate
+  summarise(mean_temp = mean(Temp_C, na.rm = TRUE), # Calculer la moyenne
+            .groups = "drop")               # Évite les messages sur le regroupement
+
+mean_temp_with_trend <- mean_temp_2020 %>%
+  left_join(
+    warming_ratesN %>% 
+      select(Mois, strate, Year.trend), # Garder seulement les colonnes nécessaires
+    by = c("Mois", "strate")           # Jointure sur Mois et strate
+  )
+years_to_project<-90
+# Projeter les températures et calculer la minéralisation
+predictions <- mean_temp_with_trend %>%
+  rowwise() %>%
+  do({
+    lake <- .
+    data.frame(
+      lake_id = lake$LakeID,        # Lac
+      Strate = lake$strate,         # Strate
+      Mois = lake$Mois,            # Mois
+      Year = 1:years_to_project,    # Projeter les années
+      Temperature = lake$mean_temp + (1:years_to_project - 1) * lake$Year.trend # Température projetée
+    )
+  }) %>%
+  ungroup() %>%
+  mutate(
+    # Minéralisation annuelle (tonnes par hectare par an)
+    YearlyMineralization_tC_haSvarttjärn = (10^(0.0336 * Temperature + 1.359)*0.365),
+    YearlyMineralization_tC_haVallentunasjön = (10^(0.0341 * Temperature + 1.848)*0.365)
+  )
+
+metadatdatanatio <- read.delim(
+  "~/Desktop/M2/miniprojetthonons/dataverse_files/01_Lake_data.txt", # Chemin vers le fichier
+  header = TRUE,                      # Le fichier contient des en-têtes
+  sep = ";",                           # Le fichier utilise un séparateur par défaut (espaces ou tabulations)
+  stringsAsFactors = FALSE            # Empêche la conversion automatique en facteurs
+)
+metadatdatanatio$LakeID<-metadatdatanatio$Lake_code
+predictions <- predictions %>%
+  mutate(Lake_code = str_remove(lake_id, "^temp_"),  # Supprimer le préfixe 'temp_'
+         Lake_code = str_remove(Lake_code, "\\.txt$"))
+
+predictions <- predictions %>%
+  left_join(metadatdatanatio, by = "Lake_code")
+
+
+predictions$Surface_area_km2
+predictions$carbon<-((predictions$YearlyMineralization_tC_haSvarttjärn+predictions$YearlyMineralization_tC_haVallentunasjön)/2)
+predictions$carbon2<-predictions$carbon*predictions$Surface_area_km2
+carbon2_summary <- predictions %>%
+  group_by(lake_id, Mois, Strate) %>%
+  summarize(carbon2 = sum(carbon2, na.rm = TRUE), .groups = "drop")
+mean(carbon2_summary$carbon2)
+carnational<-carbon2_summary
+ggplot(carbon2_summary) +
+  aes(x = Mois, y = log(carbon2), fill = Strate) +
+  geom_boxplot() +
+  scale_fill_hue(direction = 1) +
+  theme_minimal()
+
+
+
+
+
+##GLOBAL####
+###DATA####
+bathymetry_EDI <- read_csv("edi.1530.1/bathymetry_EDI.csv")
+temp <- read_csv("~/Desktop/M2/miniprojetthonons/edi.1530.1/temp_do_EDI.csv")
+length(temp)
+temp <- temp[, !colnames(temp) %in% c("DO_mgL", "DO_sat","Flag_Temp_C","Flag_DO_mgL","Flag_DO_sat")] # Supprimer les colonnes
+temp <- na.omit(temp) 
+temp <- temp %>%
+  mutate(
+    Date = as.Date(Date),  # Conversion des dates
+    Year = as.numeric(format(Date, "%Y")),
+    Month = as.numeric(format(Date, "%m")),
+    season = case_when(
+      Month %in% c(12, 1, 2) ~ "Hiver",
+      Month %in% c(3, 4, 5) ~ "Printemps",
+      Month %in% c(6, 7, 8) ~ "Eté",
+      Month %in% c(9, 10, 11) ~ "Automne"
+    )
+  )
+
+metadata <- read.csv("~/Desktop/M2/miniprojetthonons/edi.1530.1/lake_metadata_EDI.csv", stringsAsFactors = FALSE)
+temp <- temp %>%
+  left_join(metadata, by = "LakeID")
+
+temp <- temp %>%
+  group_by(LakeID, Date) %>%
+  filter(
+    any(Depth_m > 1 & Depth_m <= 0.15 * MaximumDepth_m) &  # Vérifie qu'il y a une couche épilimnion (exclut 0 m)
+      any(Depth_m >= 0.90 * MaximumDepth_m) &              # Vérifie qu'il y a une couche hypolimnion (>= 90% profondeur max)
+      (Depth_m > 1 & Depth_m <= 0.15 * MaximumDepth_m |    # Conserve les couches épilimnion (> 0 m)
+         Depth_m >= 0.90 * MaximumDepth_m)                   # Conserve les couches hypolimnion
+  ) %>%
+  mutate(
+    strate = case_when(
+      Depth_m > 1 & Depth_m <= 0.15 * MaximumDepth_m ~ "epi",  # Épilimnion si profondeur > 0 m et <= 25% profondeur max
+      Depth_m >= 0.90 * MaximumDepth_m ~ "hypo",               # Hypolimnion si profondeur >= 90% profondeur max
+      TRUE ~ NA_character_                                     # Autres cas mis à NA
+    )
+  ) %>%
+  ungroup()
+
+obs <- temp %>%
+  group_by(Year, as.character(Month), strate) %>% # Remplacez stratetemp par la colonne correspondante
+  summarise(Observations = n(), .groups = "drop")
+ggplot(temp) +
+  aes(x = Year, fill = strate) +
+  geom_histogram(bins = 30L) +
+  scale_fill_hue(direction = 1) +
+  theme_minimal() +
+  facet_wrap(vars(Month))
+
+temp_filtered <- temp %>%
+  filter(Year >= 1960 & Year <= 2020)
+mondial_filter <- temp_filtered %>%
+  group_by(LakeID, Date) %>%
+  filter(
+    any(Depth_m > 1 & Depth_m <= 0.15 * MaximumDepth_m) &  # Vérifie qu'il y a une couche épilimnion (exclut 0 m)
+      any(Depth_m >= 0.90 * MaximumDepth_m) &              # Vérifie qu'il y a une couche hypolimnion (>= 90% profondeur max)
+      (Depth_m > 1 & Depth_m <= 0.15 * MaximumDepth_m |    # Conserve les couches épilimnion (> 0 m)
+         Depth_m >= 0.90 * MaximumDepth_m)                   # Conserve les couches hypolimnion
+  ) %>%
+  mutate(
+    strate = case_when(
+      Depth_m > 1 & Depth_m <= 0.15 * MaximumDepth_m ~ "epi",  # Épilimnion si profondeur > 0 m et <= 25% profondeur max
+      Depth_m >= 0.90 * MaximumDepth_m ~ "hypo",               # Hypolimnion si profondeur >= 90% profondeur max
+      TRUE ~ NA_character_                                     # Autres cas mis à NA
+    )
+  ) %>%
+  ungroup()
+
+
+
+
+
+filtered_lakes <- mondial_filter %>%
+  filter(
+    Latitude_DD > 0,  # Lacs dans l'hémisphère Nord
+    SurfaceArea_ha > 0,  # Surface supérieure au 1er quartile34.4
+    MaximumDepth_m > 0,
+    MeanDepth_m > 0# Profondeur supérieure au 1er quartile10.67
+  ) %>%
+  group_by(LakeID,Month,strate) %>%
+  filter(n() >= 0) %>%  # Au moins 30 observations par lac par couche 60
+  ungroup()
+
+rm(mondial_filter)
+rm(metadata)
+
+head(filtered_lakes)
+# Remplacer les numéros par les noms de mois dans `pentes_lakes` ou `filtered_lakes`
+filtered_lakes <- filtered_lakes %>%
+  mutate(
+    Mois = factor(
+      as.character(Month), # Convertir les numéros en caractères
+      levels = as.character(1:12), # Spécifier l'ordre des mois
+      labels = c("Janvier", "Février", "Mars", "Avril", "Mai", "Juin",
+                 "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre")
+    )
+  )
+
+
+
+filtered_lakes$Year<-as.numeric(filtered_lakes$Year)
+mean_temp_2020 <- filtered_lakes %>%
+  filter(Year == 2010) %>%                   # Filtrer pour l'année 2020
+  group_by(LakeID, Mois, strate) %>%         # Grouper par lac, mois, et strate
+  summarise(mean_temp = mean(Temp_C, na.rm = TRUE), # Calculer la moyenne
+            .groups = "drop")               # Évite les messages sur le regroupement
+
+mean_temp_with_trend <- mean_temp_2020 %>%
+  left_join(
+    warming_ratesG %>% 
+      select(Mois, strate, Year.trend), # Garder seulement les colonnes nécessaires
+    by = c("Mois", "strate")           # Jointure sur Mois et strate
+  )
+years_to_project<-90
+# Projeter les températures et calculer la minéralisation
+predictions <- mean_temp_with_trend %>%
+  rowwise() %>%
+  do({
+    lake <- .
+    data.frame(
+      lake_id = lake$LakeID,        # Lac
+      Strate = lake$strate,         # Strate
+      Mois = lake$Mois,            # Mois
+      Year = 1:years_to_project,    # Projeter les années
+      Temperature = lake$mean_temp + (1:years_to_project - 1) * lake$Year.trend # Température projetée
+    )
+  }) %>%
+  ungroup() %>%
+  mutate(
+    # Minéralisation annuelle (tonnes par hectare par an)
+    YearlyMineralization_tC_haSvarttjärn = (10^(0.0336 * Temperature + 1.359)*0.365),
+    YearlyMineralization_tC_haVallentunasjön = (10^(0.0341 * Temperature + 1.848)*0.365)
+  )
+
+metadata <- read.csv("~/Desktop/M2/miniprojetthonons/edi.1530.1/lake_metadata_EDI.csv", stringsAsFactors = FALSE)
+
+metadata$lake_id<-metadata$LakeID
+
+
+predictions <- predictions %>%
+  left_join(metadata, by = "lake_id")
+
+
+  predictions$YearlyMineralization_tC_haVallentunasjön
+predictions$carbon<-((predictions$YearlyMineralization_tC_haSvarttjärn+predictions$YearlyMineralization_tC_haVallentunasjön)/2)
+predictions$carbon2<-predictions$carbon*predictions$SurfaceArea_ha*0.01
+carbon2_summary <- predictions %>%
+  group_by(lake_id, Mois, Strate) %>%
+  summarize(
+    carbon2 = sum(carbon2, na.rm = TRUE),
+    YearlyMineralization_tC_haSvarttjärn = sum((YearlyMineralization_tC_haSvarttjärn*SurfaceArea_ha*0.01), na.rm = TRUE),
+    YearlyMineralization_tC_haVallentunasjön = sum((YearlyMineralization_tC_haVallentunasjön*SurfaceArea_ha*0.01), na.rm = TRUE),
+    .groups = "drop"
+  )
+mean(carbon2_summary$carbon2)
+carglobal<-carbon2_summary
+ggplot(carbon2_summary) +
+  aes(x = Mois, y = log(carbon2), fill = Strate) +
+  geom_boxplot() +
+  scale_fill_hue(direction = 1) +
+  theme_minimal()
+
+
+
+
+
+
+library(ggplot2)
+
+# Premier graphique : log(carbon2)
+plot1 <- ggplot(carbon2_summary) +
+  aes(x = Mois, y = log(carbon2), fill = Strate) +
+  geom_boxplot() +
+  scale_fill_hue(direction = 1) +
+  theme_minimal() +
+  labs(title = "Boxplot of log(carbon2)")
+
+# Deuxième graphique : log(YearlyMineralization)
+plot2 <- ggplot(carbon2_summary) +
+  aes(x = Mois) +
+  geom_boxplot(aes(y = log(YearlyMineralization_tC_haSvarttjärn), fill = Strate), 
+               color = "blue", alpha = 0.3) +
+  geom_boxplot(aes(y = log(YearlyMineralization_tC_haVallentunasjön), fill = Strate), 
+               color = "red", alpha = 0.3) +
+  scale_fill_hue(direction = 1) +
+  theme_minimal() +
+  labs(title = "Boxplot of Yearly Mineralization")
+
+# Affichage des deux plots côte à côte
+library(gridExtra)
+grid.arrange(plot1, plot2, ncol = 2)
+###Merged####
+carglobal
+carnational
+carglobal$source <- "Globale"
+carnational$source <- "Nationale"
+carnational$YearlyMineralization_tC_haSvarttjärn<-NA
+carnational$YearlyMineralization_tC_haVallentunasjön<-NA
+# Fusionner les deux dataframes
+carmeged <- rbind(carglobal, carnational)
+ggplot(carmeged) +
+  aes(x = Mois, y = log(carbon2), fill = Strate) +
+  geom_boxplot() +
+  scale_fill_hue(direction = 1) +
+  theme_minimal()+facet_wrap(~source)+theme(
+    text = element_text(size = 12),
+    axis.text.x = element_text(size = 12, angle = 45, hjust = 1),
+    plot.title = element_text(size = 16, face = "bold"),
+    plot.subtitle = element_text(size = 14),legend.position = "right", # Légende à droite,
+    axis.title = element_text(size = 14, face = "bold"),
+    strip.text = element_text(size = 12, face = "bold")
+  )+labs(y="Logarithme des tonnes de carbone minéralisé")+
+  scale_fill_manual(
+    values = c("epi" = "darkred", "hypo" = "lightblue"),
+    labels = c("epi" = "Epilimnion", "hypo" = "Hypolimnion")
+  )
+
+stats_data <- carmeged %>%
+  group_by(source, Strate, Mois) %>%
+  summarise(
+    min_carbon2 = min(carbon2, na.rm = TRUE),
+    max_carbon2 = max(carbon2, na.rm = TRUE),
+    mean_carbon2 = mean(carbon2, na.rm = TRUE),
+    median_carbon2 = median(carbon2, na.rm = TRUE)
+  )
+t.test(carmeged$carbon2 ~ carmeged$Strate)
+
+#SANS LAC#####
+####SENSLOPE GLOBAL SANS LAC ####
+# Initialiser un tableau pour stocker les pentes, \(p\)-valeurs, et IC
+pentes_globales <- tibble(
+  Strate = character(),
+  Mois = integer(),
+  Pente = numeric(),
+  Sens_P_Value = numeric(),
+  IC_Bas = numeric(),
+  IC_Haut = numeric()
+)
+
+# Vérifier les strates uniques dans les données globales
+strates_globales <- unique(filtered_lakes$strate)
+print(paste("Strates disponibles:", paste(strates_globales, collapse = ", ")))
+
+# Boucle sur chaque combinaison de strate et mois
+for (strate in strates_globales) {
+  # Filtrer les données pour la strate actuelle
+  data_by_strate <- filtered_lakes %>% filter(strate == !!strate)
+  print(paste("Strate:", strate, "- Nombre d'observations:", nrow(data_by_strate)))
+  
+  for (mois in 1:12) {
+    # Filtrer les données pour le mois actuel
+    data_subset <- data_by_strate %>% filter(Month == mois)
+    print(paste("Mois:", mois, "- Observations:", nrow(data_subset)))
+    
+    # Vérifier s'il y a suffisamment de données pour le test
+    if (nrow(data_subset) < 1) next
+    
+    # Calculer la pente avec sens.slope
+    sens_slope_test <- tryCatch(
+      sens.slope(data_subset$Temp_C, data_subset$Year),
+      error = function(e) NULL
+    )
+    
+    # Extraire les résultats
+    sens_pente <- if (!is.null(sens_slope_test)) sens_slope_test$estimates else NA
+    sens_p_value <- if (!is.null(sens_slope_test)) sens_slope_test$p.value else NA
+    ic_bas <- if (!is.null(sens_slope_test)) sens_slope_test$conf.int[1] else NA
+    ic_haut <- if (!is.null(sens_slope_test)) sens_slope_test$conf.int[2] else NA
+    
+    # Ajouter les résultats dans le tableau
+    pentes_globales <- bind_rows(
+      pentes_globales,
+      tibble(
+        Strate = strate,
+        Mois = mois,
+        Pente = sens_pente,
+        Sens_P_Value = sens_p_value,
+        IC_Bas = ic_bas,
+        IC_Haut = ic_haut
+      )
+    )
+  }
+}
+
+# Résultat final
+slopeGG<-pentes_globales
+
+
+
+
+####SENSLOPE NATIONAL SANS LAC ####
+# Initialiser un tableau pour stocker les pentes, \(p\)-valeurs, et IC
+
+filtered_lakes$Year<-as.numeric(filtered_lakes$Year)
+pentes_globales <- tibble(
+  Strate = character(),
+  Mois = integer(),
+  Pente = numeric(),
+  Sens_P_Value = numeric(),
+  IC_Bas = numeric(),
+  IC_Haut = numeric()
+)
+
+# Vérifier les strates uniques dans les données globales
+strates_globales <- unique(filtered_lakes$strate)
+print(paste("Strates disponibles:", paste(strates_globales, collapse = ", ")))
+
+# Boucle sur chaque combinaison de strate et mois
+for (strate in strates_globales) {
+  # Filtrer les données pour la strate actuelle
+  data_by_strate <- filtered_lakes %>% filter(strate == !!strate)
+  print(paste("Strate:", strate, "- Nombre d'observations:", nrow(data_by_strate)))
+  
+  for (mois in 1:12) {
+    # Filtrer les données pour le mois actuel
+    data_subset <- data_by_strate %>% filter(Month == mois)
+    print(paste("Mois:", mois, "- Observations:", nrow(data_subset)))
+    
+    # Vérifier s'il y a suffisamment de données pour le test
+    if (nrow(data_subset) < 1) next
+    
+    # Calculer la pente avec sens.slope
+    sens_slope_test <- tryCatch(
+      sens.slope(data_subset$Temp_C, data_subset$Year),
+      error = function(e) NULL
+    )
+    
+    # Extraire les résultats
+    sens_pente <- if (!is.null(sens_slope_test)) sens_slope_test$estimates else NA
+    sens_p_value <- if (!is.null(sens_slope_test)) sens_slope_test$p.value else NA
+    ic_bas <- if (!is.null(sens_slope_test)) sens_slope_test$conf.int[1] else NA
+    ic_haut <- if (!is.null(sens_slope_test)) sens_slope_test$conf.int[2] else NA
+    
+    # Ajouter les résultats dans le tableau
+    pentes_globales <- bind_rows(
+      pentes_globales,
+      tibble(
+        Strate = strate,
+        Mois = mois,
+        Pente = sens_pente,
+        Sens_P_Value = sens_p_value,
+        IC_Bas = ic_bas,
+        IC_Haut = ic_haut
+      )
+    )
+  }
+}
+##REVIEW####
+##CARTEMETHODE####
+
+library(ggplot2)
+library(maps)
+
+# Charger les données du monde
+world_map <- map_data("world")
+data_path <- "dataverse_files/02_Temperature_data/00_LakeTSim_SAFRAN_OKPdefault_data"
+metadatdatanatio <- read.delim(
+  "~/Desktop/M2/miniprojetthonons/dataverse_files/01_Lake_data.txt", # Chemin vers le fichier
+  header = TRUE,                      # Le fichier contient des en-têtes
+  sep = ";",                           # Le fichier utilise un séparateur par défaut (espaces ou tabulations)
+  stringsAsFactors = FALSE            # Empêche la conversion automatique en facteurs
+)
+# Obtenir la liste des fichiers .txt dans le dossier
+file_list <- list.files(path = data_path, pattern = "\\.txt$", full.names = TRUE)
+
+# Charger tous les fichiers dans une liste
+data_list <- lapply(file_list, function(file) {
+  # Lire le fichier avec espace comme séparateur
+  data <- read.table(file, header = TRUE, sep = "", stringsAsFactors = FALSE)
+  
+  # Convertir la colonne date en type Date
+  data$date <- as.Date(data$date)
+  
+  # Retourner le data.frame
+  return(data)
+})
+names(data_list) <- basename(file_list)
+
+# Vérifier les premières lignes du premier fichier
+head(data_list[[1]])
+combined_data <- bind_rows(data_list, .id = "source")
+# Création de la carte National
+
+
+
+
+unique(combined_data$source)
+metadatdatanatio$Lake_code
+
+
+metadatdatanatio$LakeID<-metadatdatanatio$Lake_code
+combined_data <- combined_data %>%
+  mutate(source = str_remove(source, "^temp_"),  # Supprimer le préfixe 'temp_'
+         Lake_code = str_remove(source, "\\.txt$"))
+
+metadatdatanatio <- metadatdatanatio %>% 
+  filter(Lake_code %in% combined_data$Lake_code)
+
+
+ggplot() +
+  geom_polygon(
+    data = world_map,
+    aes(x = long, y = lat, group = group),
+    fill = "grey90", color = "white", alpha = 0.7
+  ) +
+  geom_point(
+    data = metadatdatanatio,
+    aes(
+      x = Longitude_deg,
+      y = Latitude_deg
+    ),
+    color = "darkblue", 
+    alpha = 0.8,
+    size = 1.5
+  ) +
+  coord_quickmap(
+    xlim = c(-5, 10),
+    ylim = c(41, 51)
+  ) +
+  labs(
+    title = "Carte des lacs à l'échelle nationale",
+    subtitle = paste(
+      "Nombre total de lacs : ", 
+      length(unique(metadatdatanatio$Lake_code))
+    ),
+    x = "",
+    y = ""
+  ) +
+  theme_minimal() +
+  theme(
+    panel.background = element_rect(fill = "lightblue", color = NA),
+    legend.position = "none",
+    plot.title = element_text(size = 16, face = "bold"),
+    plot.subtitle = element_text(size = 12, face = "italic", color = "darkblue"),
+    axis.title = element_text(size = 14, face = "bold"),
+    axis.text = element_text(size = 12)
+  )
+
+
+####
+carte_mondiale <- ggplot() +
+  geom_polygon(
+    data = world_map,
+    aes(x = long, y = lat, group = group),
+    fill = "grey90", color = "white", alpha = 0.7
+  ) +
+  geom_point(
+    data = metadata,
+    aes(
+      x = Longitude_DD,
+      y = Latitude_DD
+    ),
+    color = "dodgerblue", 
+    alpha = 0.8,
+    size = 1.5
+  ) +
+  labs(
+    title = "Carte des lacs à l'échelle mondiale",
+    subtitle = paste(
+      "Nombre total de lacs : ", 
+      length(unique(metadata$LakeID))
+    ),
+    x = "Longitude",
+    y = "Latitude"
+  ) +
+  theme_minimal() +
+  theme(
+    panel.background = element_rect(fill = "lightblue", color = NA),
+    legend.position = "none",
+    plot.title = element_text(size = 16, face = "bold"),
+    plot.subtitle = element_text(size = 12, face = "italic", color = "darkblue"),
+    axis.title = element_text(size = 14, face = "bold"),
+    axis.text = element_text(size = 12)
+  ) +
+  coord_fixed(1.3)
+
+##COMPARAISON  et similiratié 
+
+
