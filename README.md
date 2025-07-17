@@ -27,14 +27,14 @@ Les lacs, en tant que sentinelles du climat, permettent d’observer finement le
 -  Estimation du **carbone minéralisé** via les équations de Gudasz et al. (2010),
 -  Analyses statistiques réalisées sous **R** avec les packages `trend`, `emmeans`, `MuMIn`.
 
-## 🔍 Résultats clés
+##  Résultats clés
 
 -  Un **découplage thermique significatif** entre épilimnion et hypolimnion, plus net à l’échelle nationale,
 -  L’épilimnion se réchauffe **1.5 à 2× plus vite** que l’hypolimnion,
 -  À l’échelle mondiale, des lacs présentent un **refroidissement de l’hypolimnion**,
 -  Une augmentation des **flux de carbone minéralisé** est projetée jusqu’en 2100, particulièrement dans les couches superficielles.
 
-## 📊 Visualisations
+##  Visualisations
 
 ---
 
