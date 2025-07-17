@@ -38,7 +38,6 @@ Les lacs, en tant que sentinelles du climat, permettent d’observer finement le
 ## 📁 Contenu du dépôt
 
 ```bash
-├── data/               # Scripts de traitement et données sources
 ├── scripts/            # Scripts R d’analyse statistique
 ├── figures/            # Figures du rapport (température, minéralisation)
 ├── rapport/            # Rapport PDF du mini-stage
