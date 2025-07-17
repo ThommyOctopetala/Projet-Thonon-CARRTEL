@@ -1,6 +1,6 @@
 # 🌍 Étude du réchauffement thermique des lacs – Mini-projet ECOMONT 2024
 
-Ce dépôt contient les données, scripts et figures associés à un mini-stage réalisé dans le cadre du master **ECOMONT** (USMB) au **CARRTEL** (INRAE, Thonon-les-Bains), durant une semaine en mars 2024.
+Ce dépôt contient les données, scripts et figures associés à un mini-stage réalisé dans le cadre du master **ECOMONT** (USMB) au **CARRTEL** (INRAE, Thonon-les-Bains), durant une semaine en décembre 2024.
 
 ## 📌 Sujet
 
@@ -38,7 +38,7 @@ Les lacs, en tant que sentinelles du climat, permettent d’observer finement le
 
 ### 🔹 Boxplot de l'augmentation thermique
 
-![Boxplot augmentation](figures/boxplotaugmentation.jpeg)
+![Boxplot augmentation](figures/boxplotaugmententation.jpeg)
 
 ---
 
