@@ -36,10 +36,6 @@ Les lacs, en tant que sentinelles du climat, permettent d’observer finement le
 
 ## 📊 Visualisations
 
-### 🔹 Boxplot de l'augmentation thermique
-
-![Boxplot augmentation](figures/boxplotaugmententation.jpeg)
-
 ---
 
 ### 🔹 Comparaison des strates par boxplot
